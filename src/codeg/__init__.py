@@ -1,4 +1,4 @@
-from .codegenerator import (  # noqa: F401
+from .codeg import (  # noqa: F401
     Attribute,
     BaseBlock,
     BaseIndentBlock,

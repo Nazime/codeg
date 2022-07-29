@@ -1,20 +1,20 @@
-import codegenerator
-from codegenerator import Attribute
+import codeg
+from codeg import Attribute
 
 
 def test_building_simple_function():
-    c = codegenerator.function("f").ret("5")
+    c = codeg.function("f").ret("5")
     f = c.build()
     assert f() == 5
 
-    c = codegenerator.function("f", attributes=[Attribute("x")]).ret("x")
+    c = codeg.function("f", attributes=[Attribute("x")]).ret("x")
     f = c.build()
     assert f(5) == 5
     assert f(1) == 1
 
 
 def test_bound_to_instance():
-    c = codegenerator.method("f", attributes=[Attribute("x")]).ret("x*x")
+    c = codeg.method("f", attributes=[Attribute("x")]).ret("x*x")
     # creating the following function
     """def f(self,  x):
         return x*x

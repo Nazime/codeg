@@ -26,7 +26,7 @@ def read(*parts):
 
 
 # Metadata
-NAME = "codegenerator"
+NAME = "codeg"
 VERSION = get_version(f"src/{NAME}/consts.py")
 LICENSE = "MIT"
 DESCRIPTION = "Python library to generate and execute code dynamically"
