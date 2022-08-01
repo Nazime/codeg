@@ -111,7 +111,6 @@ class BaseBlock:
     ):
         # use list instead of str to optimize, str += have O(n) complexity
         script_as_list = []
-
         _atomic_script = self.generate_atomic_script()
         # If atomic script is empty string do nothing
         if _atomic_script:
@@ -124,7 +123,7 @@ class BaseBlock:
                     f"not {type(_atomic_script)}"
                 )
 
-            _atomic_script = self.tab * _indent + (self.tab * _indent + "\n").join(
+            _atomic_script = self.tab * _indent + ("\n" + self.tab * _indent).join(
                 _atomic_script
             )
             # all blocks ends with ":"
@@ -329,6 +328,7 @@ class FunctionBlock(BaseIndentBlock, DecoratorMixin):
             replace_defaults_with_none=self.replace_defaults_with_none,
         )
         ret_list.append(f"def {self.name}({signature})")
+        print(ret_list)
         return ret_list
 
     def bound_to_instance(self, instance, attribute_name: str = None):

@@ -83,6 +83,20 @@ def test_simple_method():
     assert cg.generate_code() == "def f(self):\n    pass\n"
 
 
+def test_inner_decorated_function():
+    f = codeg.function("f")
+    g = f.function("g")
+    g.decorator("property")
+    assert (
+        f.generate_code()
+        == """def f():
+    @property
+    def g():
+        pass
+"""
+    )
+
+
 def test_add_comment():
     cg = codeg.comment("bof")
     assert cg.generate_code() == "# bof\n"
