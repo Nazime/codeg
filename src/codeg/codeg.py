@@ -390,10 +390,11 @@ class GenericBlock(BaseIndentBlock):
 class ConditionBlock(BaseIndentBlock):
     def __init__(self, condition):
         BaseIndentBlock.__init__(self)
-        self.condition = condition
+        # TODO: find better way of naming?
+        self._condition = condition
 
     def generate_atomic_script(self):
-        return f"if {self.condition}"
+        return f"if {self._condition}"
 
 
 def cls(name, bases=None):
