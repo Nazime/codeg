@@ -328,7 +328,6 @@ class FunctionBlock(BaseIndentBlock, DecoratorMixin):
             replace_defaults_with_none=self.replace_defaults_with_none,
         )
         ret_list.append(f"def {self.name}({signature})")
-        print(ret_list)
         return ret_list
 
     def bound_to_instance(self, instance, attribute_name: str = None):
