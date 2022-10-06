@@ -1,0 +1,2 @@
+class CodegSyntaxError(Exception):
+    pass

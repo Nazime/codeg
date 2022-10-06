@@ -2,6 +2,7 @@ import codeg
 from codeg import Attribute
 
 
+# TODO: rework function signatures
 def test_build_script_function_signature():
     script = codeg.generate_function_signature([Attribute("x")])
     assert script == "x"

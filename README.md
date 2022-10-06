@@ -10,7 +10,7 @@ Codeg (code generator) is a python library that allows you to generate python co
 
 ## Quickstart
 
-Let's say you want to generate the following class dynamically:n
+Let's say you want to generate the following class dynamically
 
 ```python
 class Animal:

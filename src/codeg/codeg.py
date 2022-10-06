@@ -1,9 +1,10 @@
 import linecache
-import typing
 from typing import Any, Callable, List, Type, Union  # noqa: TYP001
 
 import attr
 import black
+
+from .exceptions import CodegSyntaxError
 
 
 def _attr_nothing_factory():
@@ -12,11 +13,12 @@ def _attr_nothing_factory():
     return attr.NOTHING
 
 
-def format_string_with_black(string, stub=False):
+def format_string_with_black(string: str, stub: bool = False) -> str:
+    """Format python code with PEP8 using black"""
     return black.format_str(string, mode=black.FileMode(is_pyi=stub))
 
 
-def annotation_to_str(annotation):
+def annotation_to_str(annotation) -> str:
     if hasattr(annotation, "__name__"):
         return f"{annotation.__name__}"
     else:
@@ -31,14 +33,14 @@ class Attribute:
     kw_only = attr.ib(default=False)
 
 
+# Used to generate unique filename when compiling python code
 _counter_filename = 0
 
 
-class BaseBlock:
-    indentable_block = False
-
+class BasePiece:
     def __init__(self):
-        self.blocks = []
+        self.pieces = []
+        self.sibling_pieces = []
         self.tab = "    "
 
     def __str__(self):
@@ -47,34 +49,59 @@ class BaseBlock:
     def __repr__(self):
         return self.__str__()
 
-    def generate_atomic_script(self):
+    def generate_atomic_script(self) -> str:
         return ""
+
+    def if_(self, test):
+        piece = if_(test)
+        self.pieces.append(piece)
+        return piece
+
+    def while_(self, test):
+        piece = while_(test)
+        self.pieces.append(piece)
+        return piece
+
+    def for_(self, target, iter):
+        piece = for_(target, iter)
+        self.pieces.append(piece)
+        return piece
+
+    def try_(self):
+        piece = try_()
+        self.pieces.append(piece)
+        return piece
 
     def line(self, line: str):
         if not isinstance(line, str):
             raise TypeError("line must be an str")
-        self.blocks.append(line)
+        self.pieces.append(line)
         return self
 
     def annotation(self, var, annotation):
-        self.blocks.append(AnnotationBlock(var, annotation))
+        self.pieces.append(AnnotationPiece(var, annotation))
         return self
 
-    def imports(self, modules, frm):
-        self.blocks.append(ImportBlock(modules, frm=frm))
+    def import_(self, *modules, frm=None):
+        piece = import_(*modules, frm=frm)
+        self.pieces.append(piece)
         return self
 
-    def ret(self, value):
+    def return_(self, value):
         return self.line(f"return {value}")
 
-    def comment(self, comment: str):
-        self.blocks.append(CommentBlock(comment))
+    ret = return_
+
+    def comment(self, comment: str, title=None):
+        self.pieces.append(CommentPiece(comment, title=title))
         return self
 
-    def cls(self, name, bases=None):
+    def class_(self, name, bases=None):
         block = ClassBlock(name, bases=bases)
-        self.blocks.append(block)
+        self.pieces.append(block)
         return block
+
+    cls = class_
 
     def function(
         self, name, attributes=None, add_self=None, replace_defaults_with_none=None
@@ -85,7 +112,7 @@ class BaseBlock:
             add_self=add_self,
             replace_defaults_with_none=replace_defaults_with_none,
         )
-        self.blocks.append(block)
+        self.pieces.append(block)
         return block
 
     def method(self, name, attributes=None, replace_defaults_with_none=None):
@@ -98,12 +125,12 @@ class BaseBlock:
 
     def block(self, name):
         block = GenericBlock(name)
-        self.blocks.append(block)
+        self.pieces.append(block)
         return block
 
     def condition(self, condition):
-        block = ConditionBlock(condition)
-        self.blocks.append(block)
+        block = If(condition)
+        self.pieces.append(block)
         return block
 
     def generate_code(
@@ -111,57 +138,61 @@ class BaseBlock:
     ):
         # use list instead of str to optimize, str += have O(n) complexity
         script_as_list = []
-        _atomic_script = self.generate_atomic_script()
-        # If atomic script is empty string do nothing
-        if _atomic_script:
-            # Normalize script if it's str or list[str]
-            if isinstance(_atomic_script, str):
-                _atomic_script = [_atomic_script]
-            elif not isinstance(_atomic_script, list):
-                raise ValueError(
-                    f"return of generate_atomic_script must be str or List[str]"
-                    f"not {type(_atomic_script)}"
-                )
 
-            _atomic_script = self.tab * _indent + ("\n" + self.tab * _indent).join(
-                _atomic_script
-            )
-            # all blocks ends with ":"
-            if isinstance(self, BaseIndentBlock):
-                _atomic_script += ":"
-
-            script_as_list.append(_atomic_script)
-
-            # add pass if no blocks inside
-            if isinstance(self, BaseIndentBlock) and not self.blocks:
-                # Fixme: if we have only comments also add blocks!
-                if stub:
-                    pass_or_elips = "..."
-                else:
-                    pass_or_elips = "pass"
-                script_as_list.append(self.tab * (_indent + 1) + pass_or_elips)
-
-        # Recursively generate sub blocks
-        if self.blocks:
-            if isinstance(self, BaseIndentBlock):
-
-                _indent += 1
-            for block in self.blocks:
-                if isinstance(block, str):
-                    script_as_list.append((_indent * self.tab) + block)
-                    continue
-                elif not isinstance(block, BaseBlock):
-                    raise ValueError(f"Type {type(block)!r} unhandled")
-
-                script_as_list.extend(
-                    block.generate_code(
-                        _indent=_indent,
-                        format_with_black=False,
-                        _aslist=True,
-                        stub=stub,
+        for sibling_piece in [self] + self.sibling_pieces:
+            _atomic_script = sibling_piece.generate_atomic_script()
+            # If atomic script is empty string do nothing
+            if _atomic_script:
+                # Normalize script if it's str or list[str]
+                if isinstance(_atomic_script, str):
+                    _atomic_script = [_atomic_script]
+                elif not isinstance(_atomic_script, list):
+                    raise ValueError(
+                        f"return of generate_atomic_script must be str or List[str]"
+                        f"not {type(_atomic_script)}"
                     )
-                )
 
+                _atomic_script = self.tab * _indent + ("\n" + self.tab * _indent).join(
+                    _atomic_script
+                )
+                # all blocks ends with ":"
+                if isinstance(sibling_piece, BaseIndentPiece):
+                    _atomic_script += ":"
+
+                script_as_list.append(_atomic_script)
+
+                # add pass if no blocks inside
+                if (
+                    isinstance(sibling_piece, BaseIndentPiece)
+                    and not sibling_piece.pieces
+                ):
+                    # Fixme: if we have only comments also add blocks!
+                    if stub:
+                        pass_or_elips = "..."
+                    else:
+                        pass_or_elips = "pass"
+                    script_as_list.append(self.tab * (_indent + 1) + pass_or_elips)
+
+            # Recursively generate sub blocks
+            if sibling_piece.pieces:
+                _new_indent = _indent
+                if isinstance(sibling_piece, BaseIndentPiece):
+                    _new_indent += 1
+                for block in sibling_piece.pieces:
+                    if isinstance(block, str):
+                        script_as_list.append((_new_indent * self.tab) + block)
+                        continue
+                    elif not isinstance(block, BasePiece):
+                        raise ValueError(f"Type {type(block)!r} unhandled")
+
+                    script_as_list.extend(
+                        block.generate_code(
+                            _indent=_new_indent,
+                            format_with_black=False,
+                            _aslist=True,
+                            stub=stub,
+                        )
+                    )
         # Return
         if _aslist:
             return script_as_list
@@ -171,8 +202,10 @@ class BaseBlock:
             try:
                 script = format_string_with_black(script, stub=stub)
             except Exception as e:
-                # coloring.print_red(script)
-                # coloring.print_red("========== ERORR ===========")
+                import coloring
+
+                coloring.print_red(script)
+                coloring.print_red("========== ERORR ===========")
                 raise e
 
         return script
@@ -228,15 +261,15 @@ class BaseBlock:
 
     def generate_stubcode(self):
         stubcodde = script()
-        for piece in self.blocks:
-            if isinstance(piece, (ImportBlock, AnnotationBlock)):
-                stubcodde.blocks.append(piece)
+        for piece in self.pieces:
+            if isinstance(piece, (ImportPiece, AnnotationPiece)):
+                stubcodde.pieces.append(piece)
 
             elif isinstance(piece, ClassBlock):
                 stubcls = stubcodde.cls(piece.name, piece.bases)
-                for cls_piece in piece.blocks:
-                    if isinstance(cls_piece, AnnotationBlock):
-                        stubcls.blocks.append(cls_piece)
+                for cls_piece in piece.pieces:
+                    if isinstance(cls_piece, AnnotationPiece):
+                        stubcls.pieces.append(cls_piece)
 
                     if isinstance(cls_piece, FunctionBlock):
                         stubcls.function(
@@ -250,17 +283,22 @@ class BaseBlock:
 
 
 # FIXME: handle the case where only comment are in block (must also add pass)
-class BaseIndentBlock(BaseBlock):
-    indentable_block = True
+class BaseIndentPiece(BasePiece):
+    pass
 
 
-class CommentBlock(BaseBlock):
-    def __init__(self, comment):
+class CommentPiece(BasePiece):
+    def __init__(self, comment, title=None):
         super().__init__()
-        self.comment = comment
+        if not title:
+            self.comments = [comment]
+        else:
+            wrap_comment = "#" * len(comment) + " #"
+            comment += " #"
+            self.comments = [wrap_comment, comment, wrap_comment]
 
     def generate_atomic_script(self):
-        return f"# {self.comment}"
+        return [f"# {e}" for e in self.comments]
 
 
 class DecoratorMixin:
@@ -272,9 +310,9 @@ class DecoratorMixin:
         return self
 
 
-class ClassBlock(BaseIndentBlock, DecoratorMixin):
+class ClassBlock(BaseIndentPiece, DecoratorMixin):
     def __init__(self, name, bases=None):
-        BaseIndentBlock.__init__(self)
+        BaseIndentPiece.__init__(self)
         DecoratorMixin.__init__(self)
 
         if bases is None:
@@ -298,11 +336,11 @@ class ClassBlock(BaseIndentBlock, DecoratorMixin):
         return super().build(globals, locals, filename)[self.name]
 
 
-class FunctionBlock(BaseIndentBlock, DecoratorMixin):
+class FunctionBlock(BaseIndentPiece, DecoratorMixin):
     def __init__(
         self, name, attributes=None, add_self=None, replace_defaults_with_none=None
     ):
-        BaseIndentBlock.__init__(self)
+        BaseIndentPiece.__init__(self)
         DecoratorMixin.__init__(self)
 
         if attributes is None:
@@ -351,24 +389,36 @@ class FunctionBlock(BaseIndentBlock, DecoratorMixin):
         return super().build(globals, locals, filename)[self.name]
 
 
-class ImportBlock(BaseBlock):
-    def __init__(self, libs, frm=None):
+class ImportPiece(BasePiece):
+    def __init__(self, *libs, frm=None):
         super().__init__()
-        if not isinstance(libs, typing.Sequence):
-            libs = [libs]
+        normalized_libs = []
+        for lib in libs:
+            if isinstance(lib, tuple):
+                lib_name = self._normalize_lib_element(lib[0])
+                normalized_libs.append((lib_name, lib[1]))
+            else:
+                lib = self._normalize_lib_element(lib)
+                normalized_libs.append(lib)
 
-        libs = [e.__name__ if hasattr(e, "__name__") else str(e) for e in libs]
         self.frm = frm
-        self.libs = libs
+        self.libs = normalized_libs
+        # FIXME: handle cls when importing? and test it!
+
+    def _normalize_lib_element(self, e):
+        if hasattr(e, "__name__"):
+            return e.__name__
+        return str(e)
 
     def generate_atomic_script(self):
-        libs = ", ".join(self.libs)
+        libs = [f"{e[0]} as {e[1]}" if isinstance(e, tuple) else e for e in self.libs]
+        libs = ", ".join(libs)
         if not self.frm:
             return f"import {libs}"
         return f"from {self.frm} import {libs}"
 
 
-class AnnotationBlock(BaseBlock):
+class AnnotationPiece(BasePiece):
     def __init__(self, variable, annotation):
         super().__init__()
         self.variable = variable
@@ -378,23 +428,169 @@ class AnnotationBlock(BaseBlock):
         return f"{self.variable}: {annotation_to_str(self.annotation)}"
 
 
-class GenericBlock(BaseIndentBlock):
+class GenericBlock(BaseIndentPiece):
     def __init__(self, text):
-        BaseIndentBlock.__init__(self)
+        BaseIndentPiece.__init__(self)
         self.text = text
 
     def generate_atomic_script(self):
         return self.text
 
 
-class ConditionBlock(BaseIndentBlock):
+class ElseMixin:
+    def __init__(self):
+        self._else_called = False
+
+    def else_(self):
+        if self._else_called:
+            raise CodegSyntaxError("Can not have more than one else in same block")
+
+        piece = Else()
+        self.sibling_pieces.append(piece)
+        self._else_called = True
+        return piece
+
+
+class If(BaseIndentPiece, ElseMixin):
     def __init__(self, condition):
-        BaseIndentBlock.__init__(self)
+        BaseIndentPiece.__init__(self)
+        ElseMixin.__init__(self)
         # TODO: find better way of naming?
         self._condition = condition
 
+    def elif_(self, test):
+        if self._else_called:
+            raise CodegSyntaxError("Can not have elif after else")
+
+        piece = Elif(test)
+        self.sibling_pieces.append(piece)
+        return piece
+
     def generate_atomic_script(self):
         return f"if {self._condition}"
+
+
+class Else(BaseIndentPiece):
+    def generate_atomic_script(self):
+        return f"else"
+
+
+class Elif(BaseIndentPiece):
+    def __init__(self, test):
+        super().__init__()
+        self.test = test
+
+    def generate_atomic_script(self):
+        return f"elif {self.test}"
+
+
+class Try(BaseIndentPiece, ElseMixin):
+    def __init__(self):
+        BaseIndentPiece.__init__(self)
+        ElseMixin.__init__(self)
+        self._finally_called = False
+
+    def generate_atomic_script(self):
+        return f"try"
+
+    def else_(self):
+        if self._finally_called:
+            raise CodegSyntaxError("else can not be called after finally")
+        return super().else_()
+
+    def except_(self, type=None, name=None):
+        if self._else_called:
+            raise CodegSyntaxError("except can not be called after else")
+        if self._finally_called:
+            raise CodegSyntaxError("except_ can not be called after finally")
+        piece = Except(type, name)
+        self.sibling_pieces.append(piece)
+        return piece
+
+    def finally_(self):
+        if self._finally_called:
+            raise CodegSyntaxError("finally can not be called twice")
+        piece = Finally()
+        self.sibling_pieces.append(piece)
+
+        self._finally_called = True
+        return piece
+
+
+class Except(BaseIndentPiece):
+    def __init__(self, type=None, name=None):
+        if name is not None and type is None:
+            raise ValueError("When name is present, type must be provided")
+
+        BaseIndentPiece.__init__(self)
+        self.type = type
+        self.name = name
+
+    def generate_atomic_script(self):
+        string = "except"
+        if self.type:
+            string += f" {self.type}"
+        if self.name:
+            string += f" as {self.name}"
+        return string
+
+
+class Raise(BasePiece):
+    def __init__(self, exception):
+        super().__init__()
+        self.exception = exception
+
+    def generate_atomic_script(self):
+        return f"raise {self.exception}"
+
+
+class Finally(BaseIndentPiece):
+    def generate_atomic_script(self):
+        return f"finally"
+
+
+class While(BaseIndentPiece, ElseMixin):
+    def __init__(self, test: str):
+        BaseIndentPiece.__init__(self)
+        ElseMixin.__init__(self)
+        self.test = test
+
+    def generate_atomic_script(self):
+        return f"while {self.test}"
+
+
+class For(BaseIndentPiece, ElseMixin):
+    def __init__(self, target, iter):
+        BaseIndentPiece.__init__(self)
+        ElseMixin.__init__(self)
+        self.target = target
+        self.iter = iter
+
+    def generate_atomic_script(self):
+        return f"for {self.target} in {self.iter}"
+
+
+# ========= #
+# FUNCTIONS #
+# ========= #
+def if_(test):
+    return If(test)
+
+
+def try_():
+    return Try()
+
+
+def while_(test):
+    return While(test)
+
+
+def for_(target, iter):
+    return For(target, iter)
+
+
+def import_(*modules, frm=None):
+    return ImportPiece(*modules, frm=frm)
 
 
 def cls(name, bases=None):
@@ -430,39 +626,39 @@ def method(
 
 
 def line(line):
-    base = BaseBlock()
+    base = BasePiece()
     return base.line(line)
 
 
 def script():
-    return BaseBlock()
+    return BasePiece()
 
 
 def block(content):
-    base = BaseBlock()
+    base = BasePiece()
     return base.block(content)
 
 
 # todo: fixme
-def comment(content):
-    base = BaseBlock()
-    return base.comment(content)
+def comment(content, title=None):
+    base = BasePiece()
+    return base.comment(content, title=title)
 
 
 def annotation(var, annotation):
-    base = BaseBlock()
+    base = BasePiece()
     return base.annotation(var, annotation)
 
 
-def generate_function_call(attributes: List[Attribute] = None) -> str:
+def generate_function_call(attributes: List[Attribute] = None, kw_only=False) -> str:
     # self._generic_new_entity("animals", name, age)
     script = ""
     str_attributes = []
     for attribute in attributes:
-        if not attribute.kw_only:
-            str_attributes.append(attribute.name)
-        else:
+        if attribute.kw_only or kw_only:
             str_attributes.append(f"{attribute.name}={attribute.name}")
+        else:
+            str_attributes.append(attribute.name)
 
     script += ", ".join(str_attributes)
     return script
@@ -512,3 +708,6 @@ def generate_function_signature(
 
 # FIXME: there are mixing naming between generic block and indent block, block means indent block or piece of code?!
 # TODO: create file when built to debug?
+
+# TODO: import from as
+# TODO: test name of functions/classes are identifiers

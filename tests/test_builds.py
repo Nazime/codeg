@@ -29,3 +29,6 @@ def test_bound_to_instance():
 
     c.bound_to_instance(a, "ff")
     assert a.ff(5) == 25
+
+
+# TODO: test cls build
