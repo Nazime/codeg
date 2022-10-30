@@ -1,5 +1,4 @@
 import codeg
-from codeg import Attribute
 
 
 # SIMPLE INSTRUCTIONS #
@@ -61,14 +60,14 @@ def test_simple_function():
 
 
 def test_function_with_arguments():
-    cg = codeg.function("f", [Attribute("x")])
+    cg = codeg.function("f", ["x"])
     assert cg.generate_code() == "def f(x):\n    pass\n"
 
-    cg = codeg.function("f", [Attribute("x", annotation=str)])
+    cg = codeg.function("f", [codeg.param("x", annotation=str)])
     assert cg.generate_code() == "def f(x: str):\n    pass\n"
 
     cg = codeg.function(
-        "f", [Attribute("x", annotation=str), Attribute("y", kw_only=True)]
+        "f", [codeg.param("x", annotation=str), codeg.param("y", kw_only=True)]
     )
     assert cg.generate_code() == "def f(x: str, *, y):\n    pass\n"
 

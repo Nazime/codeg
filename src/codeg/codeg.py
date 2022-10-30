@@ -1,3 +1,4 @@
+import abc
 import linecache
 from typing import Any, Callable, List, Type, Union  # noqa: TYP001
 
@@ -19,6 +20,7 @@ def format_string_with_black(string: str, stub: bool = False) -> str:
 
 
 def annotation_to_str(annotation) -> str:
+    """Convert an annotation to an str"""
     if hasattr(annotation, "__name__"):
         return f"{annotation.__name__}"
     else:
@@ -26,19 +28,39 @@ def annotation_to_str(annotation) -> str:
 
 
 @attr.s
-class Attribute:
+class Parameter:
+    """Data class used to handle attribute information"""
+
     name = attr.ib()
-    annotation = attr.ib(default=None)
-    default = attr.ib(factory=_attr_nothing_factory)
-    kw_only = attr.ib(default=False)
+    annotation = attr.ib(default=None, kw_only=True)
+    default = attr.ib(factory=_attr_nothing_factory, kw_only=True)
+    kw_only = attr.ib(default=False, kw_only=True)
+
+
+def parameter(*args, **kwargs):
+    return Parameter(*args, **kwargs)
+
+
+p = param = parameter
 
 
 # Used to generate unique filename when compiling python code
 _counter_filename = 0
 
 
-class BasePiece:
+class BasePiece(abc.ABC):
     def __init__(self):
+        """Base class used to generate a script dynamically and execute it
+
+        Algorithme:
+            Every python instruction or block is a piece (condition, loops, ...)
+            Each pieces have a list of pieces (child pieces):
+                Example: all instructions inside a 'for' loop are included in the 'pieces' list
+            Each piece have a list of sibling_pieces
+                Example: an 'if' piece can have 'else' piece or 'elif' piece in the same level (siblings)
+            generate_code is the main function that will generate the script recursively
+                generate_code will call generate_atomic_script of each piece
+        """
         self.pieces = []
         self.sibling_pieces = []
         self.tab = "    "
@@ -49,94 +71,17 @@ class BasePiece:
     def __repr__(self):
         return self.__str__()
 
-    def generate_atomic_script(self) -> str:
+    def generate_atomic_script(self) -> Union[str, List[str]]:
+        """Generate the 'important part' of script of the current cls piece (without the siblings and childs pieces)
+
+        This function should be reimplemented in all subclasses"""
         return ""
-
-    def if_(self, test):
-        piece = if_(test)
-        self.pieces.append(piece)
-        return piece
-
-    def while_(self, test):
-        piece = while_(test)
-        self.pieces.append(piece)
-        return piece
-
-    def for_(self, target, iter):
-        piece = for_(target, iter)
-        self.pieces.append(piece)
-        return piece
-
-    def try_(self):
-        piece = try_()
-        self.pieces.append(piece)
-        return piece
-
-    def line(self, line: str):
-        if not isinstance(line, str):
-            raise TypeError("line must be an str")
-        self.pieces.append(line)
-        return self
-
-    def annotation(self, var, annotation):
-        self.pieces.append(AnnotationPiece(var, annotation))
-        return self
-
-    def import_(self, *modules, frm=None):
-        piece = import_(*modules, frm=frm)
-        self.pieces.append(piece)
-        return self
-
-    def return_(self, value):
-        return self.line(f"return {value}")
-
-    ret = return_
-
-    def comment(self, comment: str, title=None):
-        self.pieces.append(CommentPiece(comment, title=title))
-        return self
-
-    def class_(self, name, bases=None):
-        block = ClassBlock(name, bases=bases)
-        self.pieces.append(block)
-        return block
-
-    cls = class_
-
-    def function(
-        self, name, attributes=None, add_self=None, replace_defaults_with_none=None
-    ):
-        block = FunctionBlock(
-            name,
-            attributes=attributes,
-            add_self=add_self,
-            replace_defaults_with_none=replace_defaults_with_none,
-        )
-        self.pieces.append(block)
-        return block
-
-    def method(self, name, attributes=None, replace_defaults_with_none=None):
-        return self.function(
-            name,
-            attributes,
-            add_self=True,
-            replace_defaults_with_none=replace_defaults_with_none,
-        )
-
-    def block(self, name):
-        block = GenericBlock(name)
-        self.pieces.append(block)
-        return block
-
-    def condition(self, condition):
-        block = If(condition)
-        self.pieces.append(block)
-        return block
 
     def generate_code(
         self, format_with_black=True, *, _indent=0, _aslist=False, stub=False
     ):
-        # use list instead of str to optimize, str += have O(n) complexity
+        """Recursive function to generate the script(str) from the picies and siblings_pieces"""
+        # use list instead of str to optimize, 'str +=' have O(n) complexity
         script_as_list = []
 
         for sibling_piece in [self] + self.sibling_pieces:
@@ -210,7 +155,34 @@ class BasePiece:
 
         return script
 
+    def generate_stubcode(self) -> str:
+        """Generate the stubfile code (file containing class names, annotations, function signature, ...)"""
+        stubcodde = script()
+        for piece in self.pieces:
+            if isinstance(piece, (ImportPiece, AnnotationPiece)):
+                stubcodde.pieces.append(piece)
+
+            elif isinstance(piece, ClassBlock):
+                stubcls = stubcodde.cls(piece.name, piece.bases)
+                for cls_piece in piece.pieces:
+                    if isinstance(cls_piece, AnnotationPiece):
+                        stubcls.pieces.append(cls_piece)
+
+                    if isinstance(cls_piece, FunctionBlock):
+                        stubcls.function(
+                            cls_piece.name,
+                            parameters=cls_piece.parameters,
+                            add_self=cls_piece.add_self,
+                            replace_defaults_with_none=cls_piece.replace_defaults_with_none,
+                        )
+
+        return stubcodde.generate_code(stub=True)
+
     def build(self, globals=None, locals=None, filename=None) -> Any:
+        """Compile the current script and return the objects in a dict
+        Subclass can return specific objects (not always dict)
+        Example: FunctionPiece return a function and not a dict
+        """
         if globals is None and locals is None:
             globals = {}
             locals = globals
@@ -259,27 +231,94 @@ class BasePiece:
         """Used for debug purpose"""
         print(self.generate_code())
 
-    def generate_stubcode(self):
-        stubcodde = script()
-        for piece in self.pieces:
-            if isinstance(piece, (ImportPiece, AnnotationPiece)):
-                stubcodde.pieces.append(piece)
+    def parameter(self, *args, **kwargs):
+        return parameter(*args, **kwargs)
 
-            elif isinstance(piece, ClassBlock):
-                stubcls = stubcodde.cls(piece.name, piece.bases)
-                for cls_piece in piece.pieces:
-                    if isinstance(cls_piece, AnnotationPiece):
-                        stubcls.pieces.append(cls_piece)
+    p = param = parameter
+    # ==================== #
+    # INSTRUCTIONS METHODS #
+    # ==================== #
 
-                    if isinstance(cls_piece, FunctionBlock):
-                        stubcls.function(
-                            cls_piece.name,
-                            attributes=cls_piece.attributes,
-                            add_self=cls_piece.add_self,
-                            replace_defaults_with_none=cls_piece.replace_defaults_with_none,
-                        )
+    def if_(self, test):
+        piece = if_(test)
+        self.pieces.append(piece)
+        return piece
 
-        return stubcodde.generate_code(stub=True)
+    def while_(self, test):
+        piece = while_(test)
+        self.pieces.append(piece)
+        return piece
+
+    def for_(self, target, iter):
+        piece = for_(target, iter)
+        self.pieces.append(piece)
+        return piece
+
+    def try_(self):
+        piece = try_()
+        self.pieces.append(piece)
+        return piece
+
+    def line(self, line: str):
+        if not isinstance(line, str):
+            raise TypeError("line must be an str")
+        self.pieces.append(line)
+        return self
+
+    def annotation(self, var, annotation):
+        self.pieces.append(AnnotationPiece(var, annotation))
+        return self
+
+    def import_(self, *modules, frm=None):
+        piece = import_(*modules, frm=frm)
+        self.pieces.append(piece)
+        return self
+
+    def return_(self, value):
+        return self.line(f"return {value}")
+
+    ret = return_
+
+    def comment(self, comment: str, title=None):
+        self.pieces.append(CommentPiece(comment, title=title))
+        return self
+
+    def class_(self, name, bases=None):
+        block = ClassBlock(name, bases=bases)
+        self.pieces.append(block)
+        return block
+
+    cls = class_
+
+    def function(
+        self, name, parameters=None, *, add_self=None, replace_defaults_with_none=None
+    ):
+        block = FunctionBlock(
+            name,
+            parameters=parameters,
+            add_self=add_self,
+            replace_defaults_with_none=replace_defaults_with_none,
+        )
+        self.pieces.append(block)
+        return block
+
+    def method(self, name, parameters=None, *, replace_defaults_with_none=None):
+        return self.function(
+            name,
+            parameters,
+            add_self=True,
+            replace_defaults_with_none=replace_defaults_with_none,
+        )
+
+    def block(self, name):
+        block = GenericBlock(name)
+        self.pieces.append(block)
+        return block
+
+    def condition(self, condition):
+        block = If(condition)
+        self.pieces.append(block)
+        return block
 
 
 # FIXME: handle the case where only comment are in block (must also add pass)
@@ -338,13 +377,12 @@ class ClassBlock(BaseIndentPiece, DecoratorMixin):
 
 class FunctionBlock(BaseIndentPiece, DecoratorMixin):
     def __init__(
-        self, name, attributes=None, add_self=None, replace_defaults_with_none=None
+        self, name, parameters=None, add_self=None, replace_defaults_with_none=None
     ):
         BaseIndentPiece.__init__(self)
         DecoratorMixin.__init__(self)
 
-        if attributes is None:
-            attributes = []
+        parameters = normalize_parameters(parameters)
 
         if add_self is None:
             add_self = False
@@ -353,7 +391,7 @@ class FunctionBlock(BaseIndentPiece, DecoratorMixin):
             replace_defaults_with_none = False
 
         self.name = name
-        self.attributes = attributes
+        self.parameters = parameters
         self.add_self = add_self
         self.replace_defaults_with_none = replace_defaults_with_none
 
@@ -361,7 +399,7 @@ class FunctionBlock(BaseIndentPiece, DecoratorMixin):
         ret_list = [f"@{e}" for e in self.decorators]
         # f"({self.}):\n"
         signature = generate_function_signature(
-            self.attributes,
+            self.parameters,
             add_self=self.add_self,
             replace_defaults_with_none=self.replace_defaults_with_none,
         )
@@ -570,6 +608,20 @@ class For(BaseIndentPiece, ElseMixin):
         return f"for {self.target} in {self.iter}"
 
 
+def normalize_parameters(parameters):
+    if parameters is None:
+        return []
+    elif not isinstance(parameters, (list, tuple)):
+        parameters = [parameters]
+
+    normalized_parameters = []
+    for e in parameters:
+        if isinstance(e, str):
+            e = Parameter(e)
+        normalized_parameters.append(e)
+    return normalized_parameters
+
+
 # ========= #
 # FUNCTIONS #
 # ========= #
@@ -598,15 +650,19 @@ def cls(name, bases=None):
     return ClassBlock(name, bases=bases)
 
 
+class_ = cls
+
+
 def function(
     name: str,
-    attributes: Union[str, List] = None,
+    parameters: Union[str, List] = None,
+    *,
     replace_defaults_with_none: bool = None,
     is_method=False,
 ):
     return FunctionBlock(
         name,
-        attributes=attributes,
+        parameters=parameters,
         add_self=is_method,
         replace_defaults_with_none=replace_defaults_with_none,
     )
@@ -614,12 +670,13 @@ def function(
 
 def method(
     name: str,
-    attributes: Union[str, List] = None,
+    parameters: Union[str, List] = None,
+    *,
     replace_defaults_with_none: bool = None,
 ):
     return function(
         name,
-        attributes,
+        parameters,
         is_method=True,
         replace_defaults_with_none=replace_defaults_with_none,
     )
@@ -650,37 +707,36 @@ def annotation(var, annotation):
     return base.annotation(var, annotation)
 
 
-def generate_function_call(attributes: List[Attribute] = None, kw_only=False) -> str:
+def generate_function_call(parameters: List[Parameter] = None, kw_only=False) -> str:
     # self._generic_new_entity("animals", name, age)
     script = ""
-    str_attributes = []
-    for attribute in attributes:
+    str_parameters = []
+    for attribute in parameters:
         if attribute.kw_only or kw_only:
-            str_attributes.append(f"{attribute.name}={attribute.name}")
+            str_parameters.append(f"{attribute.name}={attribute.name}")
         else:
-            str_attributes.append(attribute.name)
+            str_parameters.append(attribute.name)
 
-    script += ", ".join(str_attributes)
+    script += ", ".join(str_parameters)
     return script
 
 
 def generate_function_signature(
-    attributes: List[Attribute] = None, add_self=False, replace_defaults_with_none=False
+    parameters: List[Parameter] = None, add_self=False, replace_defaults_with_none=False
 ) -> str:
     """Create the function signature based on the attributes (name, annotation, default)"""
-    if attributes is None:
-        attributes = []
+    parameters = normalize_parameters(parameters)
 
     script = ""
     if add_self:
-        if attributes:
+        if parameters:
             script += "self, "
         else:
             script += "self"
 
     attributes_params = []
     kw_only = False
-    for a in attributes:
+    for a in parameters:
         if kw_only is False and a.kw_only:
             kw_only = True
             attributes_params.append("*")
