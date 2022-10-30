@@ -1,4 +1,5 @@
 import abc
+import collections.abc
 import linecache
 from typing import Any, Callable, List, Type, Union  # noqa: TYP001
 
@@ -611,7 +612,7 @@ class For(BaseIndentPiece, ElseMixin):
 def normalize_parameters(parameters):
     if parameters is None:
         return []
-    elif not isinstance(parameters, (list, tuple)):
+    elif not isinstance(parameters, collections.abc.Iterable):
         parameters = [parameters]
 
     normalized_parameters = []
