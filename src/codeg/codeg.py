@@ -45,6 +45,33 @@ def parameter(*args, **kwargs):
 p = param = parameter
 
 
+def build(source: str, globals=None, locals=None, filename=None) -> Any:
+    """Compile the script and return the objects in a dict
+    Subclass can return specific objects (not always dict)
+    """
+    if globals is None and locals is None:
+        globals = {}
+        locals = globals
+
+    if globals is None:
+        globals = {}
+
+    if locals is None:
+        locals = {}
+
+    if not filename:
+        global _counter_filename
+        _counter_filename += 1
+        filename = f"<generated with ScripBuilder {_counter_filename}>"
+
+    # Adding linecache to facilitate debuging and show lines of errors
+    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+
+    c = compile(source, filename, "exec")
+    eval(c, globals, locals)
+    return locals
+
+
 # Used to generate unique filename when compiling python code
 _counter_filename = 0
 
@@ -184,34 +211,8 @@ class BasePiece(abc.ABC):
         Subclass can return specific objects (not always dict)
         Example: FunctionPiece return a function and not a dict
         """
-        if globals is None and locals is None:
-            globals = {}
-            locals = globals
-
-        if globals is None:
-            globals = {}
-
-        if locals is None:
-            locals = {}
-
-        if not filename:
-            global _counter_filename
-            _counter_filename += 1
-            filename = f"<generated with ScripBuilder {_counter_filename}>"
-
         source = self.generate_code()
-
-        # Adding linecache to facilitate debuging and show lines of errors
-        linecache.cache[filename] = (
-            len(source),
-            None,
-            source.splitlines(True),
-            filename,
-        )
-
-        c = compile(source, filename, "exec")
-        eval(c, globals, locals)
-        return locals
+        return build(source, globals=globals, locals=locals, filename=filename)
 
     def bound_to_class(self, cls, attribute_name=None):
         if attribute_name is None:
