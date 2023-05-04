@@ -57,7 +57,7 @@ CLASSIFIERS = [
 # Packages information
 PACKAGES = find_packages(where="src")
 PACKAGE_DIR = {"": "src"}
-INSTALL_REQUIRES = ["attr", "black"]
+INSTALL_REQUIRES = ["attrs", "black"]
 EXTRAS_REQUIRE = {
     "docs": ["sphinx", "sphinx_rtd_theme", "sphinxcontrib.napoleon"],
     "tests": [

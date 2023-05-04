@@ -3,16 +3,17 @@ import collections.abc
 import linecache
 from typing import Any, Callable, List, Type, Union  # noqa: TYP001
 
-import attr
+from attrs import define, field
+import attrs
 import black
 
 from .exceptions import CodegSyntaxError
 
 
 def _attr_nothing_factory():
-    """Since attr already use attr.NOTHING for no default args,
+    """Since attr already use attrs._NOTHING for no default args,
     we use the hack as factory so that we can use nothing as default"""
-    return attr.NOTHING
+    return attrs.NOTHING
 
 
 def format_string_with_black(string: str, stub: bool = False) -> str:
@@ -28,14 +29,14 @@ def annotation_to_str(annotation) -> str:
         return f"{annotation}"
 
 
-@attr.s
+@define
 class Parameter:
     """Data class used to handle attribute information"""
 
-    name = attr.ib()
-    annotation = attr.ib(default=None, kw_only=True)
-    default = attr.ib(factory=_attr_nothing_factory, kw_only=True)
-    kw_only = attr.ib(default=False, kw_only=True)
+    name = field()
+    annotation = field(default=None, kw_only=True)
+    default = field(factory=_attr_nothing_factory, kw_only=True)
+    kw_only = field(default=False, kw_only=True)
 
 
 def parameter(*args, **kwargs):
@@ -751,7 +752,7 @@ def generate_function_signature(
             a_default = None
         else:
             a_default = a.default
-        if a_default != attr.NOTHING:
+        if a_default != attrs.NOTHING:
             # To respect PEP8 if we have annotation we add spaces
             if a.annotation:
                 a_param += f" = {a_default!r}"
